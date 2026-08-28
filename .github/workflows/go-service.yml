@@ -99,6 +99,13 @@ jobs:
     outputs:
       sha_tag: ${{ steps.tags.outputs.sha_tag }}
     steps:
+      # Clear root-owned files left by the container-based `test` job so this
+      # host job's checkout can reset the shared work dir.
+      - name: Reset workspace
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/workspace" alpine \
+            find /workspace -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
