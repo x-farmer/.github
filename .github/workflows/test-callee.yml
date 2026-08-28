@@ -1,0 +1,14 @@
+name: test-callee
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: "22"
+jobs:
+  j:
+    runs-on: [self-hosted, linux, x64, tainan-node05]
+    container:
+      image: node:${{ inputs.node-version }}-bookworm
+    steps:
+      - run: node --version
