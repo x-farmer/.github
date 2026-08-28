@@ -17,7 +17,5 @@ jobs:
     if: inputs.push-image
     needs: probe
     runs-on: [self-hosted, linux, x64, tainan-node05]
-    permissions:
-      packages: write
     steps:
-      - run: echo no-expr
+      - run: echo no-permissions
