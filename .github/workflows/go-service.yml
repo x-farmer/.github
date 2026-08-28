@@ -19,10 +19,7 @@ on:
         default: true
       superproject:
         type: string
-        default: "maple52046/x-farmer-dev"
-    secrets:
-      E2E_DISPATCH_TOKEN:
-        required: false
+        default: "x-farmer/x-farmer-dev"
 
 jobs:
   test:
@@ -141,7 +138,6 @@ jobs:
     needs: image
     runs-on: [self-hosted, linux, x64, tainan-node05]
     steps:
-      - uses: actions/checkout@v4
       - name: Dispatch full-platform E2E
         uses: x-farmer/.github/actions/dispatch-e2e@main
         with:
@@ -150,4 +146,4 @@ jobs:
           image-tag: ${{ needs.image.outputs.sha_tag }}
           source-repo: ${{ github.repository }}
           source-sha: ${{ github.event.pull_request.head.sha }}
-          token: ${{ secrets.E2E_DISPATCH_TOKEN }}
+          token: ${{ secrets.E2E_BOT_TOKEN }}
