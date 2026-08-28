@@ -1,0 +1,150 @@
+name: go-service
+
+# Reusable Tier 1 CI for src/core. Runs on the x-farmer org self-hosted runner.
+#   test  : go test with ephemeral mongo/redis services + control-plane smoke
+#   image : make build-docker (core + worker), pushed with a deterministic sha tag
+#   e2e   : on PR->dev, dispatch the superproject full-platform E2E (Tier 2)
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        type: string
+        default: "1.25"
+      component:
+        type: string
+        default: "core"
+      run-control-plane-smoke:
+        type: boolean
+        default: true
+      superproject:
+        type: string
+        default: "maple52046/x-farmer-dev"
+    secrets:
+      GHCR_TOKEN:
+        required: false
+      E2E_DISPATCH_TOKEN:
+        required: false
+
+jobs:
+  test:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, tainan-node05]
+    container:
+      image: golang:${{ inputs.go-version }}-bookworm
+    services:
+      mongodb:
+        image: mongo:7.0
+      redis:
+        image: redis:7.4-alpine
+    env:
+      XF_TEST_MONGODB_URI: mongodb://mongodb:27017
+      XF_TEST_REDIS_ADDR: redis:6379
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install tools
+        run: apt-get update && apt-get install -y --no-install-recommends curl
+
+      - name: Build binaries
+        run: make build
+
+      - name: Unit tests
+        run: make test
+
+      - name: Control-plane smoke
+        if: inputs.run-control-plane-smoke
+        run: |
+          set -euo pipefail
+          cat > /tmp/ci-config.yml <<'YML'
+          app: { environment: development }
+          observability:
+            tracing: { enabled: false }
+            metrics: { enabled: false }
+          mongodb: { uri: mongodb://mongodb:27017, database: xfarmer_ci }
+          redis: { address: redis:6379 }
+          internal: { service_token: ci-internal }
+          conductor:
+            api:
+              host: 0.0.0.0
+              port: 30351
+              auth: { jwt: { issuer: x-farmer, secret: ci-secret-change } }
+          YML
+          ./build/conductor api --config /tmp/ci-config.yml &
+          COND_PID=$!
+          trap 'kill $COND_PID 2>/dev/null || true' EXIT
+          deadline=$(( $(date +%s) + 60 ))
+          until [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+                    -H 'Content-Type: application/json' \
+                    --data '{"identifier":"x","password":"y"}' \
+                    http://localhost:30351/api/v1/auth/login)" != "000" ]; do
+            if (( $(date +%s) >= deadline )); then echo "conductor did not come up"; exit 1; fi
+            sleep 2
+          done
+          echo "conductor control plane reachable"
+
+  image:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: test
+    runs-on: [self-hosted, linux, x64, tainan-node05]
+    permissions:
+      packages: write
+    outputs:
+      sha_tag: ${{ steps.tags.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Resolve tag
+        id: tags
+        run: |
+          SRC_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          echo "sha_tag=sha-${SRC_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to ghcr.io
+        run: |
+          echo "${{ secrets.GHCR_TOKEN || github.token }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push core + worker images
+        env:
+          SHA_TAG: ${{ steps.tags.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          # Use the repo's owned build path, then also tag/push the deterministic
+          # sha tag the E2E resolves by.
+          make build-docker
+          BUILT_TAG="$(make -s print-image-tag)"
+          for img in core worker; do
+            docker tag "ghcr.io/x-farmer/$img:$BUILT_TAG" "ghcr.io/x-farmer/$img:$SHA_TAG"
+            docker push "ghcr.io/x-farmer/$img:$BUILT_TAG"
+            docker push "ghcr.io/x-farmer/$img:$SHA_TAG"
+          done
+          echo "pushed core+worker :$SHA_TAG"
+
+  e2e-dispatch:
+    # Only gate dev merges: dispatch the full-platform E2E for this candidate.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.base_ref == 'dev' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: image
+    runs-on: [self-hosted, linux, x64, tainan-node05]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dispatch full-platform E2E
+        uses: x-farmer/.github/actions/dispatch-e2e@main
+        with:
+          superproject: ${{ inputs.superproject }}
+          component: ${{ inputs.component }}
+          image-tag: ${{ needs.image.outputs.sha_tag }}
+          source-repo: ${{ github.repository }}
+          source-sha: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.E2E_DISPATCH_TOKEN }}
