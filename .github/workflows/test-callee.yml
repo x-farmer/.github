@@ -6,15 +6,8 @@ on:
         type: boolean
         default: false
 jobs:
-  probe:
-    runs-on: [self-hosted, linux, x64, tainan-node05]
-    steps:
-      - run: echo probe
   image:
     if: inputs.push-image
-    needs: probe
     runs-on: [self-hosted, linux, x64, tainan-node05]
-    permissions:
-      packages: write
     steps:
-      - run: echo perms-only
+      - run: echo "would push"
