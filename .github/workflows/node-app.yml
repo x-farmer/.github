@@ -127,8 +127,6 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository)
     needs: test
     runs-on: [self-hosted, linux, x64, tainan-node05]
-    permissions:
-      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
