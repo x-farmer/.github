@@ -53,9 +53,6 @@ on:
       image-name:
         type: string
         default: ""
-    secrets:
-      GHCR_TOKEN:
-        required: false
 
 jobs:
   test:
@@ -149,11 +146,9 @@ jobs:
           SRC_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
           echo "sha_tag=sha-${SRC_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
-      - name: Login to ghcr.io
-        run: |
-          echo "${{ secrets.GHCR_TOKEN || github.token }}" \
-            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
+      # No docker login here: the self-hosted runner host is already authenticated
+      # to ghcr (persistent ~/.docker/config.json), so no GitHub ghcr secret is
+      # needed. Keep the host `docker login ghcr.io` current on the runner.
       - name: Build and push image
         env:
           IMAGE: ${{ inputs.image-name }}
