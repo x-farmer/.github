@@ -1,0 +1,50 @@
+name: dispatch-e2e
+description: >-
+  Trigger the superproject full-platform E2E (Tier 2) for the component under
+  test, via repository_dispatch. Called by core/xclient Tier 1 on PR->dev.
+
+inputs:
+  superproject:
+    description: "owner/repo of the superproject that hosts e2e.yml"
+    required: true
+  component:
+    description: "changed component (core | xclient)"
+    required: true
+  image-tag:
+    description: "deterministic image tag pushed by Tier 1 (e.g. sha-1a2b3c4)"
+    required: true
+  source-repo:
+    description: "owner/repo of the component whose PR triggered this"
+    required: true
+  source-sha:
+    description: "head commit SHA to attach the E2E commit status to"
+    required: true
+  token:
+    description: "token allowed to dispatch on the superproject"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        SUPERPROJECT: ${{ inputs.superproject }}
+        COMPONENT: ${{ inputs.component }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        SOURCE_REPO: ${{ inputs.source-repo }}
+        SOURCE_SHA: ${{ inputs.source-sha }}
+      run: |
+        set -euo pipefail
+        echo "Dispatching e2e-full-platform to ${SUPERPROJECT} for ${COMPONENT}@${IMAGE_TAG}"
+        gh api "repos/${SUPERPROJECT}/dispatches" --method POST --input - <<EOF
+        {
+          "event_type": "e2e-full-platform",
+          "client_payload": {
+            "component": "${COMPONENT}",
+            "image_tag": "${IMAGE_TAG}",
+            "source_repo": "${SOURCE_REPO}",
+            "source_sha": "${SOURCE_SHA}"
+          }
+        }
+        EOF
