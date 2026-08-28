@@ -5,9 +5,6 @@ on:
       push-image:
         type: boolean
         default: false
-    secrets:
-      GHCR_TOKEN:
-        required: false
 jobs:
   probe:
     runs-on: [self-hosted, linux, x64, tainan-node05]
@@ -17,5 +14,7 @@ jobs:
     if: inputs.push-image
     needs: probe
     runs-on: [self-hosted, linux, x64, tainan-node05]
+    permissions:
+      packages: write
     steps:
-      - run: echo no-permissions
+      - run: echo perms-only
