@@ -1,0 +1,156 @@
+name: node-app
+
+# Reusable Tier 1 CI for Node projects (dashboard, desktop). Runs on the
+# x-farmer org self-hosted runner. Tests run inside a pinned Node container
+# (throwaway); the optional image build runs on the runner host (needs Docker).
+#
+# Callers set the ecosystem specifics via inputs. dashboard publishes an image
+# and runs a Vite dev smoke; desktop uses xvfb + system packages and publishes
+# no image (it is not on the request path / not in Tier 2).
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: "22"
+      run-lint:
+        type: boolean
+        default: true
+      run-typecheck:
+        type: boolean
+        default: false
+      typecheck-cmd:
+        type: string
+        default: "npm run typecheck"
+      test-cmd:
+        type: string
+        default: "npm test"
+      build-cmd:
+        type: string
+        default: "npm run build"
+      system-packages:
+        type: string
+        default: ""
+      use-xvfb:
+        type: boolean
+        default: false
+      run-dev-smoke:
+        type: boolean
+        default: false
+      dev-cmd:
+        type: string
+        default: ""
+      dev-health-url:
+        type: string
+        default: ""
+      dev-wait-seconds:
+        type: string
+        default: "90"
+      push-image:
+        type: boolean
+        default: false
+      image-name:
+        type: string
+        default: ""
+    secrets:
+      GHCR_TOKEN:
+        required: false
+
+jobs:
+  test:
+    # Reject pull_request runs from forks — self-hosted runners must never
+    # execute untrusted code from outside the repository.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, tainan-node05]
+    container:
+      image: node:${{ inputs.node-version }}-bookworm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install system packages
+        if: inputs.system-packages != ''
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ${{ inputs.system-packages }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        if: inputs.run-lint
+        run: npm run lint
+
+      - name: Typecheck
+        if: inputs.run-typecheck
+        run: ${{ inputs.typecheck-cmd }}
+
+      - name: Test
+        run: |
+          if [ "${{ inputs.use-xvfb }}" = "true" ]; then
+            xvfb-run -a ${{ inputs.test-cmd }}
+          else
+            ${{ inputs.test-cmd }}
+          fi
+
+      - name: Build
+        run: ${{ inputs.build-cmd }}
+
+      - name: Dev server smoke
+        if: inputs.run-dev-smoke
+        env:
+          DEV_CMD: ${{ inputs.dev-cmd }}
+          DEV_URL: ${{ inputs.dev-health-url }}
+          WAIT: ${{ inputs.dev-wait-seconds }}
+        run: |
+          set -euo pipefail
+          echo "Starting dev server: $DEV_CMD"
+          bash -c "$DEV_CMD" &
+          DEV_PID=$!
+          trap 'kill $DEV_PID 2>/dev/null || true' EXIT
+          deadline=$(( $(date +%s) + WAIT ))
+          until curl -sf -o /dev/null "$DEV_URL"; do
+            if ! kill -0 $DEV_PID 2>/dev/null; then echo "dev server exited early"; exit 1; fi
+            if (( $(date +%s) >= deadline )); then echo "timeout waiting for $DEV_URL"; exit 1; fi
+            sleep 3
+          done
+          echo "dev server healthy at $DEV_URL"
+
+  image:
+    if: >-
+      inputs.push-image &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    needs: test
+    runs-on: [self-hosted, linux, x64, tainan-node05]
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Resolve tags
+        id: tags
+        run: |
+          SRC_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          echo "sha_tag=sha-${SRC_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to ghcr.io
+        run: |
+          echo "${{ secrets.GHCR_TOKEN || github.token }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push image
+        env:
+          IMAGE: ${{ inputs.image-name }}
+          SHA_TAG: ${{ steps.tags.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          docker build -t "$IMAGE:$SHA_TAG" .
+          docker push "$IMAGE:$SHA_TAG"
+          echo "pushed $IMAGE:$SHA_TAG"
