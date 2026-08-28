@@ -2,13 +2,36 @@ name: test-callee
 on:
   workflow_call:
     inputs:
-      node-version:
+      push-image:
+        type: boolean
+        default: false
+      image-name:
         type: string
-        default: "22"
+        default: ""
+    secrets:
+      GHCR_TOKEN:
+        required: false
 jobs:
-  j:
+  probe:
     runs-on: [self-hosted, linux, x64, tainan-node05]
-    container:
-      image: node:${{ inputs.node-version }}-bookworm
     steps:
-      - run: node --version
+      - run: echo probe
+  image:
+    if: >-
+      inputs.push-image &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    needs: probe
+    runs-on: [self-hosted, linux, x64, tainan-node05]
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login to ghcr.io
+        run: |
+          echo "${{ secrets.GHCR_TOKEN || github.token }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push image
+        env:
+          IMAGE: ${{ inputs.image-name }}
+        run: docker build -t "$IMAGE:test" .
