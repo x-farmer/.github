@@ -1,0 +1,96 @@
+name: python-app
+
+# Reusable Tier 1 CI for src/xclient. Runs on the x-farmer org self-hosted runner.
+#   test  : uv sync + uv run pytest (low value on its own, but cheap)
+#   image : make build-docker (xclient), pushed with a deterministic sha tag
+#   e2e   : on PR->dev, dispatch the superproject full-platform E2E (Tier 2)
+#           where xclient is the request-path driver.
+
+on:
+  workflow_call:
+    inputs:
+      uv-image:
+        type: string
+        default: "ghcr.io/astral-sh/uv:python3.12-bookworm"
+      component:
+        type: string
+        default: "xclient"
+      superproject:
+        type: string
+        default: "maple52046/x-farmer-dev"
+    secrets:
+      GHCR_TOKEN:
+        required: false
+      E2E_DISPATCH_TOKEN:
+        required: false
+
+jobs:
+  test:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, tainan-node05]
+    container:
+      image: ${{ inputs.uv-image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Sync deps
+        run: uv sync
+      - name: Tests
+        run: uv run pytest
+
+  image:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: test
+    runs-on: [self-hosted, linux, x64, tainan-node05]
+    permissions:
+      packages: write
+    outputs:
+      sha_tag: ${{ steps.tags.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Resolve tag
+        id: tags
+        run: |
+          SRC_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          echo "sha_tag=sha-${SRC_SHA:0:7}" >> "$GITHUB_OUTPUT"
+      - name: Login to ghcr.io
+        run: |
+          echo "${{ secrets.GHCR_TOKEN || github.token }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push image
+        env:
+          SHA_TAG: ${{ steps.tags.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          make build-docker
+          BUILT_TAG="$(make -s print-image-tag)"
+          docker tag "ghcr.io/x-farmer/xclient:$BUILT_TAG" "ghcr.io/x-farmer/xclient:$SHA_TAG"
+          docker push "ghcr.io/x-farmer/xclient:$BUILT_TAG"
+          docker push "ghcr.io/x-farmer/xclient:$SHA_TAG"
+          echo "pushed xclient :$SHA_TAG"
+
+  e2e-dispatch:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.base_ref == 'dev' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: image
+    runs-on: [self-hosted, linux, x64, tainan-node05]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dispatch full-platform E2E
+        uses: x-farmer/.github/actions/dispatch-e2e@main
+        with:
+          superproject: ${{ inputs.superproject }}
+          component: ${{ inputs.component }}
+          image-tag: ${{ needs.image.outputs.sha_tag }}
+          source-repo: ${{ github.repository }}
+          source-sha: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.E2E_DISPATCH_TOKEN }}
