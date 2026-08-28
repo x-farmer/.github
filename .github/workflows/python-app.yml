@@ -19,8 +19,6 @@ on:
         type: string
         default: "maple52046/x-farmer-dev"
     secrets:
-      GHCR_TOKEN:
-        required: false
       E2E_DISPATCH_TOKEN:
         required: false
 
@@ -68,10 +66,8 @@ jobs:
         run: |
           SRC_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
           echo "sha_tag=sha-${SRC_SHA:0:7}" >> "$GITHUB_OUTPUT"
-      - name: Login to ghcr.io
-        run: |
-          echo "${{ secrets.GHCR_TOKEN || github.token }}" \
-            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      # Host is already logged in to ghcr (persistent ~/.docker/config.json); no
+      # GitHub ghcr secret needed.
       - name: Build and push image
         env:
           SHA_TAG: ${{ steps.tags.outputs.sha_tag }}
