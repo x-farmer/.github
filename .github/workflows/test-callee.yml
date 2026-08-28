@@ -20,7 +20,4 @@ jobs:
     permissions:
       packages: write
     steps:
-      - name: Login expr
-        run: echo "len=${#X}" 
-        env:
-          X: ${{ secrets.GHCR_TOKEN || github.token }}
+      - run: echo no-expr
