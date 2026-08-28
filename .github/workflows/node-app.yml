@@ -131,6 +131,14 @@ jobs:
     needs: test
     runs-on: [self-hosted, linux, x64, tainan-node05]
     steps:
+      # The container-based `test` job writes into the shared work dir as root;
+      # this host job runs as the runner user and cannot clean those files, so
+      # clear the workspace with a root container before checkout.
+      - name: Reset workspace
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/workspace" alpine \
+            find /workspace -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
