@@ -1,8 +1,0 @@
-name: min-callee
-on:
-  workflow_call: {}
-jobs:
-  j:
-    runs-on: [self-hosted, linux, x64, tainan-node05]
-    steps:
-      - run: echo "reusable OK on $(hostname)"
