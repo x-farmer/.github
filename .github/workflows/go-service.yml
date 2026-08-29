@@ -37,6 +37,10 @@ jobs:
     env:
       XF_TEST_MONGODB_URI: mongodb://mongodb:27017
       XF_TEST_REDIS_ADDR: redis:6379
+      # The checked-out tree is owned by the host uid (container runs as root),
+      # so Go's git VCS stamping hits "dubious ownership" (exit 128). Disable it;
+      # the Makefile sets main.Version explicitly anyway.
+      GOFLAGS: -buildvcs=false
     defaults:
       run:
         shell: bash
