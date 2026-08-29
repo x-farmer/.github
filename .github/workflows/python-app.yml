@@ -9,9 +9,6 @@ name: python-app
 on:
   workflow_call:
     inputs:
-      python-image:
-        type: string
-        default: "python:3.12-bookworm"
       component:
         type: string
         default: "xclient"
@@ -26,7 +23,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, tainan-node05]
     container:
-      image: ${{ inputs.python-image }}
+      image: python:3.12-bookworm
     defaults:
       run:
         shell: bash
